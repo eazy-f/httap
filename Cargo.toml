@@ -4,5 +4,12 @@ version = "0.1.0"
 authors = ["Nikita Lebedev <eazy-f@yandex.ru>"]
 
 [dependencies]
-winapi = {version = "0.3", features = ["processthreadsapi", "memoryapi", "errhandlingapi"]}
+  [dependencies.winapi]
+    version = "0.3"
+    features = [
+      "processthreadsapi",
+      "memoryapi",
+      "errhandlingapi",
+      "winbase"
+    ]
 detour = "0.6.0"
