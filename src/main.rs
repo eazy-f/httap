@@ -51,23 +51,22 @@ fn winpanic(err: &'static str) {
 }
 
 #[cfg(windows)]
-fn load(pid: u32){
+fn load(pid: u32, dll: &String){
     let process = unsafe {
         let access = PROCESS_CREATE_THREAD | PROCESS_VM_OPERATION | PROCESS_VM_WRITE;
         OpenProcess(access, FALSE as i32, pid)
     };
     win_panic_handle(process, "cannot open process");
     let kernel32_file = CString::new("kernel32.dll").unwrap();
-    let alloc_size = {
-        kernel32_file.as_bytes_with_nul().len()
-    };
+    let inject_dll = CString::new(dll.as_bytes()).unwrap();
+    let alloc_size = inject_dll.as_bytes_with_nul().len();
     let allocation = unsafe {
         VirtualAllocEx(process, ptr::null_mut(), alloc_size, MEM_COMMIT, PAGE_EXECUTE_READWRITE)
     };
     win_panic_handle(allocation, "cannot allocate memory in the remote process");
     let write_res = unsafe {
         WriteProcessMemory(
-            process, allocation, kernel32_file.as_ptr() as *mut Winptr,
+            process, allocation, inject_dll.as_ptr() as *mut Winptr,
             alloc_size, ptr::null_mut()
         )
     };
@@ -100,12 +99,14 @@ fn load(pid: u32){
 }
 
 #[cfg(not(windows))]
-fn load(pid: u32){
+fn load(_pid: u32, _dll: &String){
     println!("Hello, world!");
 }
 
 
 fn main() {
-    let pid = std::env::args().nth(1).unwrap();
-    load(pid.parse::<u32>().unwrap());
+    let args: Vec<String> = std::env::args().collect();
+    let pid = &args[1];
+    let dll = &args[2];
+    load(pid.parse::<u32>().unwrap(), dll);
 }

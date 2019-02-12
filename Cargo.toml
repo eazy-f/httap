@@ -3,6 +3,10 @@ name = "httpfork"
 version = "0.1.0"
 authors = ["Nikita Lebedev <eazy-f@yandex.ru>"]
 
+[lib]
+name = "winhttplog"
+crate-type = ["dylib"]
+
 [dependencies]
   [dependencies.winapi]
     version = "0.3"
