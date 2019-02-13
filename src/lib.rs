@@ -3,7 +3,12 @@ extern crate winapi;
 #[macro_use]
 extern crate detour;
 
-use std::{thread, sync::Mutex, rc::Rc};
+use std::{
+    thread,
+    sync::{Mutex, mpsc},
+    rc::Rc
+};
+
 use winapi::{
     um::{
         winnt::LPCWSTR,
@@ -42,7 +47,11 @@ pub extern "system" fn DllMain(
 
 fn init() {
     thread::spawn(move || {
-        let replacement = |internet, _, _, _| internet;
+        let (tx, rx) = mpsc::channel();
+        let replacement = move |internet, _, _, _| {
+            tx.send(0).unwrap();
+            internet
+        };
         let hook = unsafe {
             DetourConnect.initialize(WinHttpConnect, replacement).unwrap()
         };
@@ -54,6 +63,9 @@ fn init() {
         let remove = move || {
             unsafe { (*hook_box_remove.lock().unwrap()).disable().unwrap() };
         };
-        server::start(install, remove).unwrap();
+        let looper = move || {
+            rx.try_iter().count()
+        };
+        server::start(install, looper, remove).unwrap();
     });
 }

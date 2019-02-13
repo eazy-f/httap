@@ -16,5 +16,6 @@ detour = "0.6.0"
       "memoryapi",
       "errhandlingapi",
       "winbase",
-      "winhttp"
+      "winhttp",
+      "securitybaseapi"
     ]
