@@ -1,12 +1,15 @@
-#![cfg(windows)]
-
 extern crate winapi;
 
+use std::thread;
+#[cfg(windows)]
 use winapi::shared::{
     minwindef,
     minwindef::{BOOL, DWORD, HINSTANCE, LPVOID}
 };
 
+mod server;
+
+#[cfg(windows)]
 #[no_mangle]
 #[allow(non_snake_case, unused_variables)]
 pub extern "system" fn DllMain(
@@ -19,12 +22,14 @@ pub extern "system" fn DllMain(
     const DLL_PROCESS_DETACH: DWORD = 0;
 
     match call_reason {
-        DLL_PROCESS_ATTACH => demo_init(),
+        DLL_PROCESS_ATTACH => init(),
         DLL_PROCESS_DETACH => (),
         _ => ()
     }
     minwindef::TRUE
 }
 
-fn demo_init() {
+#[allow(dead_code)]
+fn init() {
+    thread::spawn(move || { server::start().unwrap(); });
 }

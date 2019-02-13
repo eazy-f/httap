@@ -24,7 +24,11 @@ use winapi::um::errhandlingapi::GetLastError;
 #[cfg(windows)]
 use std::ffi::CString;
 
+#[cfg(windows)]
 use std::ptr;
+
+#[cfg(not(windows))]
+mod server;
 
 #[cfg(windows)]
 type Winptr = winapi::ctypes::c_void;
@@ -100,9 +104,10 @@ fn load(pid: u32, dll: &String){
 
 #[cfg(not(windows))]
 fn load(_pid: u32, _dll: &String){
-    println!("Hello, world!");
+    use std::thread;
+    let server = thread::spawn(move || { server::start().unwrap(); });
+    server.join().unwrap();
 }
-
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
