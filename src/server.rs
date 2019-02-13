@@ -4,7 +4,7 @@ use std::{thread, time};
 use std::collections::HashMap;
 
 pub fn start<FA: Fn() -> (), FB: Fn() -> ()>(start_fn: FA, end_fn: FB) -> Result<()> {
-    let socket = UdpSocket::bind("127.0.0.1:42010")?;
+    let socket = UdpSocket::bind("0.0.0.0:42010")?;
     let sleep_intl = time::Duration::from_millis(100);
     let client_ttl = sleep_intl * 100;
     socket.set_nonblocking(true).unwrap();
