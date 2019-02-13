@@ -3,7 +3,7 @@ use std::io::{Result, ErrorKind};
 use std::{thread, time};
 use std::collections::HashMap;
 
-pub fn start() -> Result<()> {
+pub fn start<FA: Fn() -> (), FB: Fn() -> ()>(start_fn: FA, end_fn: FB) -> Result<()> {
     let socket = UdpSocket::bind("127.0.0.1:42010")?;
     let sleep_intl = time::Duration::from_millis(100);
     let client_ttl = sleep_intl * 100;
@@ -12,6 +12,7 @@ pub fn start() -> Result<()> {
     let mut buf = [0; 10];
     loop {
         let now = time::SystemTime::now();
+        let old_len = clients.len();
         match socket.recv_from(&mut buf) {
             Ok((_amt, src)) => {
                 clients.insert(src, now);
@@ -21,11 +22,14 @@ pub fn start() -> Result<()> {
             error => panic!(error)
         };
         thread::sleep(sleep_intl);
-        let old_len = clients.len();
         clients = clients.into_iter().filter(|&(_, time)| {now.duration_since(time).unwrap() < client_ttl}).collect();
-        if (clients.len() == 0) && (old_len > 0) {
-            break;
+        if old_len != clients.len() {
+            if old_len == 0 {
+                start_fn();
+            }
+            if clients.len() == 0 {
+                end_fn();
+            }
         }
     };
-    Ok(())
 }

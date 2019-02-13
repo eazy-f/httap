@@ -31,5 +31,5 @@ pub extern "system" fn DllMain(
 
 #[allow(dead_code)]
 fn init() {
-    thread::spawn(move || { server::start().unwrap(); });
+    thread::spawn(move || { server::start(|| {}, || {}).unwrap(); });
 }

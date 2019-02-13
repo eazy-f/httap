@@ -104,8 +104,21 @@ fn load(pid: u32, dll: &String){
 
 #[cfg(not(windows))]
 fn load(_pid: u32, _dll: &String){
-    use std::thread;
-    let server = thread::spawn(move || { server::start().unwrap(); });
+    use std::{thread, sync, time, rc};
+
+    let server = thread::spawn(move || {
+        let start_time_a = rc::Rc::new(sync::Mutex::new(None));
+        let start_time_b = start_time_a.clone();
+        let start = move || {
+            *start_time_a.lock().unwrap() = Some(time::SystemTime::now());
+        };
+        let end = move || {
+            let mut time = start_time_b.lock().unwrap();
+            println!("{}", (*time).unwrap().duration_since(time::SystemTime::UNIX_EPOCH).unwrap().as_secs());
+            *time = None;
+        };
+        server::start(start, end).unwrap();
+    });
     server.join().unwrap();
 }
 
