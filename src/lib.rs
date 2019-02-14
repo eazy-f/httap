@@ -66,7 +66,7 @@ fn init() {
         let replacement = move |session, server, port, reserved| {
             tx.send(0).unwrap();
             unsafe {
-                (win_http_connect)(session, server, port, reserved)
+                DetourConnect.get().unwrap().call(session, server, port, reserved)
             }
         };
         let hook = unsafe {
