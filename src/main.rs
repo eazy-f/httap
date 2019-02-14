@@ -5,7 +5,6 @@ use winapi::{
     um::{
         libloaderapi::{GetModuleHandleA, GetProcAddress},
         memoryapi::{VirtualAllocEx, WriteProcessMemory},
-        errhandlingapi::GetLastError,
         winnt::{
             PROCESS_CREATE_THREAD,
             PROCESS_VM_OPERATION,
@@ -17,7 +16,8 @@ use winapi::{
             LUID,
             TOKEN_PRIVILEGES,
             LUID_AND_ATTRIBUTES,
-            SE_PRIVILEGE_ENABLED
+            SE_PRIVILEGE_ENABLED,
+            SECURITY_DESCRIPTOR
         },
         processthreadsapi::{
             OpenProcess,
@@ -26,7 +26,8 @@ use winapi::{
             GetCurrentProcess
         },
         securitybaseapi::AdjustTokenPrivileges,
-        winbase::LookupPrivilegeValueA
+        winbase::LookupPrivilegeValueA,
+        minwinbase::SECURITY_ATTRIBUTES
     },
     shared::ntdef::FALSE
 };
@@ -37,6 +38,8 @@ use std::ffi::CString;
 #[cfg(windows)]
 use std::{ptr, mem};
 
+#[cfg(windows)]
+mod win;
 #[cfg(not(windows))]
 mod server;
 
@@ -44,40 +47,19 @@ mod server;
 type Winptr = winapi::ctypes::c_void;
 
 #[cfg(windows)]
-fn win_panic_handle(handle: *const winapi::ctypes::c_void, err: &'static str) {
-    if handle == ptr::null() {
-        winpanic(err);
-    }
-}
-
-#[cfg(windows)]
-fn win_panic_code(code: i32, err: &'static str) {
-    if code == 0 {
-        winpanic(err);
-    }
-}
-
-#[cfg(windows)]
-fn winpanic(err: &'static str) {
-    let ec = unsafe { GetLastError() };
-    println!("error code: {}", ec);
-    panic!(err);
-}
-
-#[cfg(windows)]
 fn enable_debug() {
     let process = unsafe { GetCurrentProcess() };
     let token = unsafe {
         let mut token: HANDLE = mem::uninitialized();
         let success = OpenProcessToken(process, TOKEN_ALL_ACCESS, &mut token);
-        win_panic_code(success, "cannot open current process access token");
+        win::panic_code(success, "cannot open current process access token");
         token
     };
     let privilege = unsafe {
         let priv_name = CString::new("SeDebugPrivilege").unwrap();
         let mut uuid: LUID = mem::uninitialized();
         let success = LookupPrivilegeValueA(ptr::null_mut(), priv_name.as_ptr(), &mut uuid);
-        win_panic_code(success,"cannot lookup debug privilege");
+        win::panic_code(success,"cannot lookup debug privilege");
         uuid
     };
     let mut privileges = TOKEN_PRIVILEGES {
@@ -94,7 +76,7 @@ fn enable_debug() {
             ptr::null_mut()
         )
     };
-    win_panic_code(adjusted, "cannot adjust token privileges");
+    win::panic_code(adjusted, "cannot adjust token privileges");
 }
 
 #[cfg(windows)]
@@ -104,41 +86,45 @@ fn load(pid: u32, dll: &String){
         let access = PROCESS_CREATE_THREAD | PROCESS_VM_OPERATION | PROCESS_VM_WRITE;
         OpenProcess(access, FALSE as i32, pid)
     };
-    win_panic_handle(process, "cannot open process");
+    win::panic_handle(process, "cannot open process");
     let kernel32_file = CString::new("kernel32.dll").unwrap();
     let inject_dll = CString::new(dll.as_bytes()).unwrap();
     let alloc_size = inject_dll.as_bytes_with_nul().len();
     let allocation = unsafe {
         VirtualAllocEx(process, ptr::null_mut(), alloc_size, MEM_COMMIT, PAGE_EXECUTE_READWRITE)
     };
-    win_panic_handle(allocation, "cannot allocate memory in the remote process");
+    win::panic_handle(allocation, "cannot allocate memory in the remote process");
     let write_res = unsafe {
         WriteProcessMemory(
             process, allocation, inject_dll.as_ptr() as *mut Winptr,
             alloc_size, ptr::null_mut()
         )
     };
-    win_panic_code(write_res, "cannot write to process memory");
+    win::panic_code(write_res, "cannot write to process memory");
     let stack_size = 512 * 1024;
     let creation = 0;
-    let security = ptr::null_mut();
+    let mut security = SECURITY_ATTRIBUTES {
+        nLength: mem::size_of::<SECURITY_DESCRIPTOR>() as u32,
+        lpSecurityDescriptor: ptr::null_mut(),
+        bInheritHandle: FALSE as i32
+    };
     let thread_id = ptr::null_mut();
     let loadlibrary_fun = CString::new("LoadLibraryA").unwrap();
     let kernel32_module = unsafe { GetModuleHandleA(kernel32_file.as_ptr()) };
-    win_panic_handle(kernel32_module as *const Winptr, "cannot get kernel32 module handle");
+    win::panic_handle(kernel32_module as *const Winptr, "cannot get kernel32 module handle");
     let loadlibrary_addr = unsafe { GetProcAddress(kernel32_module, loadlibrary_fun.as_ptr()) };
-    win_panic_handle(loadlibrary_addr as *const Winptr, "cannot find LoadLibraryA address");
+    win::panic_handle(loadlibrary_addr as *const Winptr, "cannot find LoadLibraryA address");
     let loadlibrary_ptr = unsafe {
         let ptr = std::mem::transmute::<*mut winapi::shared::minwindef::__some_function, unsafe extern "system" fn(*mut winapi::ctypes::c_void) -> u32>(loadlibrary_addr);
         Some(ptr)
     };
     let thread = unsafe {
         CreateRemoteThread(
-            process, security, stack_size, loadlibrary_ptr,
+            process, &mut security, stack_size, loadlibrary_ptr,
             allocation, creation, thread_id
         )
     };
-    win_panic_handle(thread, "failed to create remote thread");
+    win::panic_handle(thread, "failed to create remote thread");
     println!("thread id: {}", thread as u64);
 }
 

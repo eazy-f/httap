@@ -24,7 +24,7 @@ pub fn start<FA, FB, FC>(start_fn: FA, looper: FB, end_fn: FC) -> Result<()>
         };
         let calls = looper();
         /* FIXME: fold Result instead of foreach */
-        if calls > 0 {
+        if calls >= 0 {
             let message = format!("calls: {}\n", calls);
             clients.iter().for_each(|(client, _)| {
                 socket.send_to(message.as_bytes(), client).unwrap();
