@@ -19,6 +19,7 @@ server (actively sending any data) will receive text data with parameters
 of the following calls:
 
 * WinHttpConnect
+* WinHttpSendRequest
 
 # License
 

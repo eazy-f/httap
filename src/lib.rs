@@ -20,6 +20,7 @@ use winapi::{
     shared::{
         minwindef,
         minwindef::{BOOL, DWORD, HINSTANCE, LPVOID},
+        basetsd::DWORD_PTR
     }
 };
 
@@ -30,9 +31,11 @@ mod win;
 
 type Winptr = winapi::ctypes::c_void;
 type WinHttpConnectFun = unsafe extern "system" fn(HINTERNET, LPCWSTR, INTERNET_PORT, DWORD) -> HINTERNET;
+type WinHttpSendRequestFun = unsafe extern "system" fn(HINTERNET, LPCWSTR, DWORD, LPVOID, DWORD, DWORD, DWORD_PTR) -> BOOL;
 
 static_detours! {
     struct DetourConnect: unsafe extern "system" fn(HINTERNET, LPCWSTR, INTERNET_PORT, DWORD) -> HINTERNET;
+    struct DetourSendRequest: unsafe extern "system" fn(HINTERNET, LPCWSTR, DWORD, LPVOID, DWORD, DWORD, DWORD_PTR) -> BOOL;
 }
 
 #[no_mangle]
@@ -54,18 +57,31 @@ pub extern "system" fn DllMain(
     minwindef::TRUE
 }
 
+fn get_proc_address(module: &str, function: &str) -> *mut winapi::shared::minwindef::__some_function {
+    let module_name = CString::new(module).unwrap();
+    let fun_name = CString::new(function).unwrap();
+    let module = unsafe { GetModuleHandleA(module_name.as_ptr()) };
+    win::panic_handle(module as *const Winptr, "cannot get module handle");
+    unsafe {
+        let addr = GetProcAddress(module, fun_name.as_ptr());
+        win::panic_handle(addr as *const Winptr, "cannot get function address");
+        addr
+    }
+}
+
 fn init() {
     thread::spawn(move || {
         let (tx, rx) = mpsc::channel();
-        let win_http_lib = CString::new("winhttp.dll").unwrap();
-        let win_http_connect_fun = CString::new("WinHttpConnect").unwrap();
-        let win_http_module = unsafe { GetModuleHandleA(win_http_lib.as_ptr()) };
-        win::panic_handle(win_http_module as *const Winptr, "cannot get winhttp module handle");
         let win_http_connect = unsafe {
-            let addr = GetProcAddress(win_http_module, win_http_connect_fun.as_ptr());
-            win::panic_handle(addr as *const Winptr, "cannot get WinHttpConnect address");
+            let addr = get_proc_address("winhttp.dll", "WinHttpConnect");
             std::mem::transmute::<*mut winapi::shared::minwindef::__some_function, WinHttpConnectFun>(addr)
         };
+        let win_http_send_request = unsafe {
+            let addr = get_proc_address("winhttp.dll", "WinHttpSendRequest");
+            std::mem::transmute::<*mut winapi::shared::minwindef::__some_function,
+                                  WinHttpSendRequestFun>(addr)
+        };
+        let tx2 = tx.clone();
         let replacement = move |session, server, port, reserved| {
             let server_str = unsafe {
                 U16CString::from_ptr_str(server)
@@ -75,16 +91,36 @@ fn init() {
                 DetourConnect.get().unwrap().call(session, server, port, reserved)
             }
         };
+        let whsr_replacement = move |request, headers, headers_len, optional, optional_length, total_length, context| {
+            let headers_str = unsafe {
+                U16CString::from_ptr_str(headers)
+            };
+            tx2.send(headers_str.to_string().unwrap()).unwrap();
+            unsafe {
+                DetourSendRequest.get().unwrap().call(request, headers, headers_len, optional, optional_length, total_length, context)
+            }
+        };
         let hook = unsafe {
             DetourConnect.initialize(win_http_connect, replacement).unwrap()
         };
+        let hook2 = unsafe {
+            DetourSendRequest.initialize(win_http_send_request, whsr_replacement).unwrap()
+        };
         let hook_box = Rc::new(Mutex::new(hook));
         let hook_box_remove = hook_box.clone();
+        let hook2_box = Rc::new(Mutex::new(hook2));
+        let hook2_box_remove = hook2_box.clone();
         let install = move || {
-            unsafe { (*hook_box.lock().unwrap()).enable().unwrap() };
+            unsafe {
+                (*hook_box.lock().unwrap()).enable().unwrap();
+                (*hook2_box.lock().unwrap()).enable().unwrap();
+            };
         };
         let remove = move || {
-            unsafe { (*hook_box_remove.lock().unwrap()).disable().unwrap() };
+            unsafe {
+                (*hook_box_remove.lock().unwrap()).disable().unwrap();
+                (*hook2_box_remove.lock().unwrap()).disable().unwrap();
+            };
         };
         let looper = move || {
             rx.try_iter().collect::<Vec<String>>()
