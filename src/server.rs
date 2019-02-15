@@ -4,7 +4,7 @@ use std::{thread, time};
 use std::collections::HashMap;
 
 pub fn start<FA, FB, FC>(start_fn: FA, looper: FB, end_fn: FC) -> Result<()>
-    where FA: Fn() -> (), FB: Fn() -> usize, FC: Fn() -> ()
+    where FA: Fn() -> (), FB: Fn() -> Vec<String>, FC: Fn() -> ()
 {
     let socket = UdpSocket::bind("0.0.0.0:42010")?;
     let sleep_intl = time::Duration::from_millis(100);
@@ -22,12 +22,14 @@ pub fn start<FA, FB, FC>(start_fn: FA, looper: FB, end_fn: FC) -> Result<()>
             Err(ref err) if err.kind() == ErrorKind::WouldBlock => (),
             error => panic!(error)
         };
-        let calls = looper();
+        let messages = looper();
         /* FIXME: fold Result instead of foreach */
-        if calls >= 0 {
-            let message = format!("calls: {}\n", calls);
+        if messages.len() > 0 {
             clients.iter().for_each(|(client, _)| {
-                socket.send_to(message.as_bytes(), client).unwrap();
+                messages.iter().for_each(|captured| {
+                    let message = format!("{}\n", captured);
+                    socket.send_to(message.as_bytes(), client).unwrap();
+                });
             });
         }
         thread::sleep(sleep_intl);

@@ -143,7 +143,7 @@ fn load(_pid: u32, _dll: &String){
             println!("{}", (*time).unwrap().duration_since(time::SystemTime::UNIX_EPOCH).unwrap().as_secs());
             *time = None;
         };
-        server::start(start, || 0, end).unwrap();
+        server::start(start, || vec!(), end).unwrap();
     });
     server.join().unwrap();
 }

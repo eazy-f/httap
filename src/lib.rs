@@ -2,6 +2,7 @@
 extern crate winapi;
 #[macro_use]
 extern crate detour;
+extern crate widestring;
 
 use std::{
     thread,
@@ -13,7 +14,7 @@ use std::{
 use winapi::{
     um::{
         winnt::LPCWSTR,
-        winhttp::{HINTERNET, INTERNET_PORT, WinHttpConnect},
+        winhttp::{HINTERNET, INTERNET_PORT},
         libloaderapi::{GetModuleHandleA, GetProcAddress}
     },
     shared::{
@@ -21,6 +22,8 @@ use winapi::{
         minwindef::{BOOL, DWORD, HINSTANCE, LPVOID},
     }
 };
+
+use widestring::U16CString;
 
 mod server;
 mod win;
@@ -64,7 +67,10 @@ fn init() {
             std::mem::transmute::<*mut winapi::shared::minwindef::__some_function, WinHttpConnectFun>(addr)
         };
         let replacement = move |session, server, port, reserved| {
-            tx.send(0).unwrap();
+            let server_str = unsafe {
+                U16CString::from_ptr_str(server)
+            };
+            tx.send(server_str.to_string().unwrap()).unwrap();
             unsafe {
                 DetourConnect.get().unwrap().call(session, server, port, reserved)
             }
@@ -81,7 +87,7 @@ fn init() {
             unsafe { (*hook_box_remove.lock().unwrap()).disable().unwrap() };
         };
         let looper = move || {
-            rx.try_iter().count()
+            rx.try_iter().collect::<Vec<String>>()
         };
         server::start(install, looper, remove).unwrap();
     });
