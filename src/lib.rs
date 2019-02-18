@@ -8,7 +8,8 @@ use std::{
     thread,
     sync::{Mutex, mpsc},
     rc::Rc,
-    ffi::CString
+    ffi::CString,
+    ops::Deref
 };
 
 use winapi::{
@@ -25,6 +26,7 @@ use winapi::{
 };
 
 use widestring::U16CString;
+use detour::{Function, GenericDetour};
 
 mod server;
 mod win;
@@ -37,6 +39,11 @@ static_detours! {
     struct DetourConnect: unsafe extern "system" fn(HINTERNET, LPCWSTR, INTERNET_PORT, DWORD) -> HINTERNET;
     struct DetourSendRequest: unsafe extern "system" fn(HINTERNET, LPCWSTR, DWORD, LPVOID, DWORD, DWORD, DWORD_PTR) -> BOOL;
 }
+
+trait DetourFunction<T: Function>: Deref<Target=GenericDetour<T>> {}
+
+impl DetourFunction<WinHttpConnectFun> for detour::StaticDetour<WinHttpConnectFun> {}
+impl DetourFunction<WinHttpSendRequestFun> for detour::StaticDetour<WinHttpSendRequestFun> {}
 
 #[no_mangle]
 #[allow(non_snake_case, unused_variables)]
@@ -100,27 +107,25 @@ fn init() {
                 DetourSendRequest.get().unwrap().call(request, headers, headers_len, optional, optional_length, total_length, context)
             }
         };
-        let hook = unsafe {
-            DetourConnect.initialize(win_http_connect, replacement).unwrap()
-        };
-        let hook2 = unsafe {
-            DetourSendRequest.initialize(win_http_send_request, whsr_replacement).unwrap()
-        };
-        let hook_box = Rc::new(Mutex::new(hook));
-        let hook_box_remove = hook_box.clone();
-        let hook2_box = Rc::new(Mutex::new(hook2));
-        let hook2_box_remove = hook2_box.clone();
+        let hooks: [Box<dyn DetourFunction>] = [
+            Box::new(unsafe {
+                DetourConnect.initialize(win_http_connect, replacement).unwrap()
+            }),
+            Box::new(unsafe {
+                DetourSendRequest.initialize(win_http_send_request, whsr_replacement).unwrap()
+            })
+        ];
+/*        let hook_boxes = hooks.into_iter().map(|hook| Rc::new(Mutex::new(*hook))).collect();
+        let hook_boxes_remove = hook_boxes.iter().map(|hbox| hbox.clone()).collect();*/
         let install = move || {
-            unsafe {
-                (*hook_box.lock().unwrap()).enable().unwrap();
-                (*hook2_box.lock().unwrap()).enable().unwrap();
-            };
+//            hook_boxes.into_iter().for_each(|hbox| unsafe {
+//                (*hbox.lock().unwrap()).enable().unwrap();
+//            })
         };
         let remove = move || {
-            unsafe {
-                (*hook_box_remove.lock().unwrap()).disable().unwrap();
-                (*hook2_box_remove.lock().unwrap()).disable().unwrap();
-            };
+//            hook_boxes_remove.into_iter().for_each(|hbox| unsafe {
+//                (*hbox.lock().unwrap()).disable().unwrap();
+//            })
         };
         let looper = move || {
             rx.try_iter().collect::<Vec<String>>()
