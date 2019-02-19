@@ -8,8 +8,7 @@ use std::{
     thread,
     sync::{Mutex, mpsc},
     rc::Rc,
-    ffi::CString,
-    ops::Deref
+    ffi::CString
 };
 
 use winapi::{
@@ -26,7 +25,6 @@ use winapi::{
 };
 
 use widestring::U16CString;
-use detour::{Function, GenericDetour};
 
 mod server;
 mod win;
@@ -40,10 +38,30 @@ static_detours! {
     struct DetourSendRequest: unsafe extern "system" fn(HINTERNET, LPCWSTR, DWORD, LPVOID, DWORD, DWORD, DWORD_PTR) -> BOOL;
 }
 
-trait DetourFunction<T: Function>: Deref<Target=GenericDetour<T>> {}
+type DetourResult = Result<(), detour::Error>;
 
-impl DetourFunction<WinHttpConnectFun> for detour::StaticDetour<WinHttpConnectFun> {}
-impl DetourFunction<WinHttpSendRequestFun> for detour::StaticDetour<WinHttpSendRequestFun> {}
+trait DetourFunction {
+    unsafe fn enable(&mut self) -> DetourResult;
+    unsafe fn disable(&mut self) -> DetourResult;
+}
+
+impl DetourFunction for detour::StaticDetour<WinHttpConnectFun> {
+    unsafe fn enable(&mut self) -> DetourResult {
+        (**self).enable()
+    }
+    unsafe fn disable(&mut self) -> DetourResult {
+        (**self).disable()
+    }
+}
+
+impl DetourFunction for detour::StaticDetour<WinHttpSendRequestFun> {
+    unsafe fn enable(&mut self) -> DetourResult {
+        (**self).enable()
+    }
+    unsafe fn disable(&mut self) -> DetourResult {
+        (**self).disable()
+    }
+}
 
 #[no_mangle]
 #[allow(non_snake_case, unused_variables)]
@@ -107,25 +125,25 @@ fn init() {
                 DetourSendRequest.get().unwrap().call(request, headers, headers_len, optional, optional_length, total_length, context)
             }
         };
-        let hooks: [Box<dyn DetourFunction>] = [
+        let hooks: Vec<Box<dyn DetourFunction>> = vec!(
             Box::new(unsafe {
                 DetourConnect.initialize(win_http_connect, replacement).unwrap()
             }),
             Box::new(unsafe {
                 DetourSendRequest.initialize(win_http_send_request, whsr_replacement).unwrap()
             })
-        ];
-/*        let hook_boxes = hooks.into_iter().map(|hook| Rc::new(Mutex::new(*hook))).collect();
-        let hook_boxes_remove = hook_boxes.iter().map(|hbox| hbox.clone()).collect();*/
+        );
+        let hook_boxes: Vec<Rc<Mutex<Box<dyn DetourFunction>>>> = hooks.into_iter().map(|hook| Rc::new(Mutex::new(hook))).collect();
+        let hook_boxes_remove: Vec<Rc<Mutex<Box<dyn DetourFunction>>>> = hook_boxes.iter().map(|hbox| hbox.clone()).collect();
         let install = move || {
-//            hook_boxes.into_iter().for_each(|hbox| unsafe {
-//                (*hbox.lock().unwrap()).enable().unwrap();
-//            })
+            hook_boxes.iter().for_each(|hbox| unsafe {
+                hbox.lock().unwrap().enable().unwrap();
+            })
         };
         let remove = move || {
-//            hook_boxes_remove.into_iter().for_each(|hbox| unsafe {
-//                (*hbox.lock().unwrap()).disable().unwrap();
-//            })
+            hook_boxes_remove.iter().for_each(|hbox| unsafe {
+                hbox.lock().unwrap().disable().unwrap();
+            })
         };
         let looper = move || {
             rx.try_iter().collect::<Vec<String>>()
