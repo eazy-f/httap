@@ -8,7 +8,8 @@ use std::{
     thread,
     sync::{Mutex, mpsc},
     rc::Rc,
-    ffi::CString
+    ffi::CString,
+    ptr
 };
 
 use winapi::{
@@ -32,10 +33,12 @@ mod win;
 type Winptr = winapi::ctypes::c_void;
 type WinHttpConnectFun = unsafe extern "system" fn(HINTERNET, LPCWSTR, INTERNET_PORT, DWORD) -> HINTERNET;
 type WinHttpSendRequestFun = unsafe extern "system" fn(HINTERNET, LPCWSTR, DWORD, LPVOID, DWORD, DWORD, DWORD_PTR) -> BOOL;
+type WinHttpOpenRequestFun = unsafe extern "system" fn(HINTERNET, LPCWSTR, LPCWSTR, LPCWSTR, LPCWSTR, *mut LPCWSTR, DWORD) -> HINTERNET;
 
 static_detours! {
     struct DetourConnect: unsafe extern "system" fn(HINTERNET, LPCWSTR, INTERNET_PORT, DWORD) -> HINTERNET;
     struct DetourSendRequest: unsafe extern "system" fn(HINTERNET, LPCWSTR, DWORD, LPVOID, DWORD, DWORD, DWORD_PTR) -> BOOL;
+    struct DetourOpenRequest: unsafe extern "system" fn(HINTERNET, LPCWSTR, LPCWSTR, LPCWSTR, LPCWSTR, *mut LPCWSTR, DWORD) -> HINTERNET;
 }
 
 type DetourResult = Result<(), detour::Error>;
@@ -55,6 +58,15 @@ impl DetourFunction for detour::StaticDetour<WinHttpConnectFun> {
 }
 
 impl DetourFunction for detour::StaticDetour<WinHttpSendRequestFun> {
+    unsafe fn enable(&mut self) -> DetourResult {
+        (**self).enable()
+    }
+    unsafe fn disable(&mut self) -> DetourResult {
+        (**self).disable()
+    }
+}
+
+impl DetourFunction for detour::StaticDetour<WinHttpOpenRequestFun> {
     unsafe fn enable(&mut self) -> DetourResult {
         (**self).enable()
     }
@@ -106,7 +118,13 @@ fn init() {
             std::mem::transmute::<*mut winapi::shared::minwindef::__some_function,
                                   WinHttpSendRequestFun>(addr)
         };
+        let win_http_open_request = unsafe {
+            let addr = get_proc_address("winhttp.dll", "WinHttpOpenRequest");
+            std::mem::transmute::<*mut winapi::shared::minwindef::__some_function,
+                                  WinHttpOpenRequestFun>(addr)
+        };
         let tx2 = tx.clone();
+        let tx3 = tx.clone();
         let replacement = move |session, server, port, reserved| {
             let server_str = unsafe {
                 U16CString::from_ptr_str(server)
@@ -125,12 +143,35 @@ fn init() {
                 DetourSendRequest.get().unwrap().call(request, headers, headers_len, optional, optional_length, total_length, context)
             }
         };
+        let whor_replacement = move |connect, verb, object_name, version, referrer, accept_types, flags| {
+            let verb_str = if verb == ptr::null() {
+                String::from("GET")
+            } else {
+                let wstr = unsafe {
+                    U16CString::from_ptr_str(verb)
+                };
+                wstr.to_string().unwrap()
+            };
+            let object_name_str = {
+                let wstr = unsafe {
+                    U16CString::from_ptr_str(object_name)
+                };
+                wstr.to_string().unwrap()
+            };
+            tx3.send(format!("{} {}", verb_str, object_name_str)).unwrap();
+            unsafe {
+                DetourOpenRequest.get().unwrap().call(connect, verb, object_name, version, referrer, accept_types, flags)
+            }
+        };
         let hooks: Vec<Box<dyn DetourFunction>> = vec!(
             Box::new(unsafe {
                 DetourConnect.initialize(win_http_connect, replacement).unwrap()
             }),
             Box::new(unsafe {
                 DetourSendRequest.initialize(win_http_send_request, whsr_replacement).unwrap()
+            }),
+            Box::new(unsafe {
+                DetourOpenRequest.initialize(win_http_open_request, whor_replacement).unwrap()
             })
         );
         let hook_boxes: Vec<Rc<Mutex<Box<dyn DetourFunction>>>> = hooks.into_iter().map(|hook| Rc::new(Mutex::new(hook))).collect();
